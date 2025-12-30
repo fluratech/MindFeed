@@ -1,0 +1,269 @@
+{% extends 'base.html' %}
+
+{% block title %}Read Newspaper | MindFeed{% endblock %}
+
+{% block content %}
+<div class="dashboard-grid">
+    <aside class="sidebar">
+        <h3>Menu</h3>
+        <nav>
+            <a href="{{ url_for('dashboard') }}" class="nav-link">Dashboard</a>
+            <a href="{{ url_for('upload_news_page') }}" class="nav-link active">Upload Newspaper</a>
+            <a href="{{ url_for('live_news') }}" class="nav-link">Live Broadcast 🎙️</a>
+            <a href="{{ url_for('upload_link_page') }}" class="nav-link">Summarize Link </a>
+            <a href="{{ url_for('history') }}" class="nav-link">Archive</a>
+            <a href="{{ url_for('auth.preferences') }}" class="nav-link">Preferences</a>
+        </nav>
+    </aside>
+
+    <main class="main-content">
+        
+        <div id="upload-section" style="max-width: 600px; margin: 0 auto; text-align: center; padding-top: 2rem;">
+            <header style="margin-bottom: 2rem;">
+                <h1>Upload Newspaper</h1>
+                <p style="color: var(--text-muted);">We will extract only the news relevant to your preferences.</p>
+            </header>
+
+            <div class="card" style="padding: 3rem; border: 2px dashed #ccc; border-radius: 15px; transition: all 0.3s;" id="drop-zone">
+                <div style="font-size: 3rem; margin-bottom: 1rem;">📄</div>
+                <h3 style="margin-bottom: 1rem;">Drag & Drop PDF here</h3>
+                <p style="color: #888; margin-bottom: 2rem;">or click to browse</p>
+                
+                <input type="file" id="file-input" accept="application/pdf" style="display: none;">
+                <button onclick="document.getElementById('file-input').click()" class="btn-sm">Select PDF</button>
+            </div>
+            
+            <div id="loading" style="display: none; margin-top: 2rem;">
+                <div style="font-size: 1.2rem; color: #27ae60; font-weight: bold; margin-bottom: 10px;">
+                    🤖 AI is reading the newspaper...
+                </div>
+                <p style="color: #666;">Filtering based on your interests...</p>
+                <div style="width: 50px; height: 50px; border: 5px solid #f3f3f3; border-top: 5px solid #27ae60; border-radius: 50%; animation: spin 1s linear infinite; margin: 20px auto;"></div>
+            </div>
+        </div>
+
+
+        <div id="studio-section" style="display: none;">
+            <header style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 2rem;">
+                <div>
+                    <h1>🎙️ Personalized Paper Review</h1>
+                    <p style="color: var(--text-muted);">Curated from your upload</p>
+                </div>
+                <button onclick="location.reload()" class="btn-sm btn-outline">Upload Another</button>
+            </header>
+
+            <div class="card" style="max-width: 800px; margin: 0 auto; padding: 2rem; text-align: center;">
+                <div style="margin-bottom: 20px;">
+                    <span class="status-badge" id="status" style="background: #27ae60; color: white; padding: 5px 15px; border-radius: 20px; font-weight: bold;">
+                        Ready to Air
+                    </span>
+                </div>
+
+                <div id="teleprompter" style="background: #1a1a1a; color: #e0e0e0; padding: 30px; border-radius: 12px; font-family: monospace; font-size: 1.2rem; line-height: 1.6; min-height: 150px; margin: 20px 0; border: 1px solid #333;">
+                    Newspaper analysis complete. Click 'Go Live' to listen.
+                </div>
+
+                <div class="controls" style="margin-top: 30px;">
+                    <button id="startBtn" class="btn-sm" style="background-color: #e74c3c; border: none; font-size: 1.1rem; padding: 12px 30px;">
+                        🔴 Go Live
+                    </button>
+                    <button id="stopBtn" class="btn-sm btn-outline" style="margin-left: 10px; display: none;">
+                        ⏹ Stop
+                    </button>
+                </div>
+            </div>
+        </div>
+
+    </main>
+</div>
+
+<style>
+    @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+</style>
+
+<script>
+    // --- GLOBAL VARS ---
+    let newsData = null; // Store processed data here
+
+    // --- FILE UPLOAD LOGIC ---
+    const fileInput = document.getElementById('file-input');
+    const dropZone = document.getElementById('drop-zone');
+    const uploadSection = document.getElementById('upload-section');
+    const studioSection = document.getElementById('studio-section');
+    const loadingDiv = document.getElementById('loading');
+
+    fileInput.addEventListener('change', handleFiles);
+    
+    // Drag and Drop Effects
+    dropZone.addEventListener('dragover', (e) => { e.preventDefault(); dropZone.style.borderColor = '#27ae60'; dropZone.style.background = '#f0fdf4'; });
+    dropZone.addEventListener('dragleave', (e) => { e.preventDefault(); dropZone.style.borderColor = '#ccc'; dropZone.style.background = 'white'; });
+    dropZone.addEventListener('drop', (e) => { 
+        e.preventDefault(); 
+        dropZone.style.borderColor = '#ccc'; 
+        dropZone.style.background = 'white';
+        if(e.dataTransfer.files.length) uploadFile(e.dataTransfer.files[0]);
+    });
+
+    function handleFiles() {
+        if(this.files.length) uploadFile(this.files[0]);
+    }
+
+    async function uploadFile(file) {
+        if(file.type !== 'application/pdf') { alert("Please upload a PDF file."); return; }
+
+        // UI Change
+        dropZone.style.display = 'none';
+        loadingDiv.style.display = 'block';
+
+        const formData = new FormData();
+        formData.append('file', file);
+
+        try {
+            const res = await fetch('/api/process-pdf', { method: 'POST', body: formData });
+            const data = await res.json();
+
+            if(data.success) {
+                newsData = data.news_data; // Save data for broadcast
+                uploadSection.style.display = 'none';
+                studioSection.style.display = 'block'; // Show Radio
+            } else {
+                alert("Error: " + data.message);
+                location.reload();
+            }
+        } catch (e) {
+            console.error(e);
+            alert("Network Error");
+            location.reload();
+        }
+    }
+
+
+    // --- RADIO LOGIC (REUSED FROM LIVE NEWS) ---
+    const AUDIO_INTRO = "/static/media/newsIntro.mp3";
+    const AUDIO_HEAD  = "/static/media/newsHead.mp3";
+    const AUDIO_DETAIL = "/static/media/newsDetails.mp3";
+    const bgmIntro = new Audio(AUDIO_INTRO);
+    const bgmHead = new Audio(AUDIO_HEAD);
+    const bgmDetail = new Audio(AUDIO_DETAIL);
+    bgmHead.loop = true; bgmDetail.loop = true;
+
+    let isRunning = false;
+    const prompter = document.getElementById("teleprompter");
+    const statusBadge = document.getElementById("status");
+    const synth = window.speechSynthesis;
+    let malayalamVoice = null;
+
+    function loadVoices() {
+        const voices = synth.getVoices();
+        malayalamVoice = voices.find(v => v.lang.includes('ml'));
+    }
+    if (speechSynthesis.onvoiceschanged !== undefined) speechSynthesis.onvoiceschanged = loadVoices;
+
+    async function startBroadcast() {
+        if (isRunning) return;
+        
+        document.getElementById("startBtn").style.display = "none";
+        document.getElementById("stopBtn").style.display = "inline-block";
+        
+        // Unlock Audio
+        [bgmIntro, bgmHead, bgmDetail].forEach(a => { a.play().then(() => a.pause()).catch(() => {}); });
+        loadVoices();
+
+        isRunning = true;
+        statusBadge.innerText = "ON AIR";
+        statusBadge.style.background = "#e74c3c";
+
+        try {
+            bgmHead.volume = 0.1;
+            bgmDetail.volume = 0.1;
+
+            // 1. Intro
+            updatePrompter("നമസ്കാരം, പ്രധാന വാർത്തകൾ...");
+            await speak("നമസ്കാരം, പ്രധാന വാർത്തകൾ...");
+            await playAudioUntilEnd(bgmIntro);
+
+            // 2. Headlines
+            updatePrompter("Headlines...");
+            bgmHead.currentTime = 0;
+            bgmHead.play();
+
+            for (let line of newsData.headlines) {
+                if (!isRunning) return;
+                updatePrompter(line);
+                await speak(line);
+                await wait(600);
+            }
+            bgmHead.pause();
+
+            // 3. Transition
+            updatePrompter("വാർത്തകൾ വിശദമായി...");
+            await speak("വാർത്തകൾ വിശദമായി...");
+            
+            bgmDetail.currentTime = 0;
+            bgmDetail.volume = 0;
+            bgmDetail.play();
+            fadeIn(bgmDetail, 0.1);
+            await wait(1000);
+
+            // 4. Details
+            for (let line of newsData.details) {
+                if (!isRunning) return;
+                updatePrompter(line);
+                await speak(line);
+                await wait(800);
+            }
+
+            // 5. Outro
+            updatePrompter("വാർത്തകൾ പൂർണ്ണമാകുന്നു. നന്ദി.");
+            await speak("വാർത്തകൾ പൂർണ്ണമാകുന്നു. നന്ദി, നമസ്കാരം.");
+            fadeOut(bgmDetail);
+            await playAudioUntilEnd(bgmIntro);
+
+            stopImmediately();
+
+        } catch (err) { console.log(err); stopImmediately(); }
+    }
+
+    function updatePrompter(text) { prompter.innerText = text; prompter.style.borderLeft = "5px solid #27ae60"; }
+    function speak(text) {
+        return new Promise(resolve => {
+            if (!isRunning) { resolve(); return; }
+            synth.cancel();
+            const utter = new SpeechSynthesisUtterance(text);
+            utter.lang = 'ml-IN';
+            if(malayalamVoice) utter.voice = malayalamVoice;
+            utter.rate = 0.9;
+            utter.onend = resolve; utter.onerror = resolve;
+            synth.speak(utter);
+        });
+    }
+    function playAudioUntilEnd(audio) {
+        return new Promise(resolve => {
+            if (!isRunning) { resolve(); return; }
+            audio.currentTime = 0;
+            audio.play().catch(() => resolve());
+            audio.onended = resolve;
+        });
+    }
+    function wait(ms) { return new Promise(r => setTimeout(r, ms)); }
+    function fadeIn(a, max) {
+        let v = 0; a.volume = 0;
+        let i = setInterval(() => { if(v<max) { v+=0.01; a.volume=v; } else clearInterval(i); }, 100);
+    }
+    function fadeOut(a) {
+        let i = setInterval(() => { if(a.volume>0.01) a.volume-=0.01; else { clearInterval(i); a.pause(); } }, 100);
+    }
+    function stopImmediately() {
+        isRunning = false;
+        synth.cancel();
+        bgmIntro.pause(); bgmHead.pause(); bgmDetail.pause();
+        statusBadge.innerText = "Complete";
+        statusBadge.style.background = "#95a5a6";
+        document.getElementById("startBtn").style.display = "inline-block";
+        document.getElementById("stopBtn").style.display = "none";
+    }
+
+    document.getElementById('startBtn').addEventListener('click', startBroadcast);
+    document.getElementById('stopBtn').addEventListener('click', stopImmediately);
+</script>
+{% endblock %}

@@ -1,0 +1,65 @@
+{% extends 'base.html' %}
+
+{% block title %}Dashboard | MindFeed{% endblock %}
+
+{% block content %}
+<div class="dashboard-grid">
+    <aside class="sidebar">
+        <h3>Menu</h3>
+        <nav>
+            <a href="{{ url_for('dashboard') }}" class="nav-link active">Dashboard</a>
+            <a href="{{ url_for('upload_news_page') }}" class="nav-link">Upload Newspaper</a>
+            <a href="{{ url_for('live_news') }}" class="nav-link">Live Broadcast 🎙️</a>
+            <a href="{{ url_for('upload_link_page') }}" class="nav-link">Summarize Link </a>
+            <a href="{{ url_for('history') }}" class="nav-link">Archive</a>
+            <a href="{{ url_for('auth.preferences') }}" class="nav-link">Preferences</a>
+        </nav>
+    </aside>
+
+    <main class="main-content">
+        <header style="margin-bottom: 2rem;">
+            <h1>Dashboard</h1>
+            <p style="color: var(--text-muted);">Welcome, {{ session.get('user_name', 'User') }}. Select a module to begin.</p>
+        </header>
+
+        <div class="content-grid">
+            <div class="feature-card">
+                <div class="feature-icon">📄</div>
+                <h4>Read Newspaper</h4> <p style="color: var(--text-muted); margin: 0.5rem 0 1rem;">Upload PDF & listen.</p>
+                
+                <a href="{{ url_for('upload_news_page') }}" class="btn-sm" 
+                   style="background-color: #3498db; color: white; text-decoration: none; display: inline-block; font-size: 0.8rem; border: none;">
+                   Upload PDF
+                </a>
+            </div>
+
+            <div class="feature-card">
+                <div class="feature-icon">📻</div>
+                <h4>AI News Studio</h4>
+                <p style="color: var(--text-muted); margin: 0.5rem 0 1rem;">Listen to your personalized daily broadcast.</p>
+                <a href="{{ url_for('live_news') }}" class="btn-sm" style="background-color: #3498db; color: white; text-decoration: none; display: inline-block; font-size: 0.8rem; border: none;">
+                    ▶ Enter Live Studio
+                </a>
+            </div>
+
+            <div class="feature-card">
+                <div class="feature-icon">🔗</div>
+                <h4>Summarize Link</h4>
+                <p style="color: var(--text-muted); margin: 0.5rem 0 1rem;">Listen to any web article.</p>
+                
+                <a href="{{ url_for('upload_link_page') }}" class="btn-sm" 
+                   style="background-color: #8e44ad; color: white; text-decoration: none; display: inline-block; font-size: 0.8rem; border: none;">
+                   Paste URL
+                </a>
+            </div>
+
+            <div class="feature-card">
+                <div class="feature-icon">📅</div>
+                <h4>Archive</h4>
+                <p style="color: var(--text-muted); margin: 0.5rem 0 1rem;">Past briefings.</p>
+                <a href="{{ url_for('auth.history') }}" class="btn-sm btn-outline">View History</a>
+            </div>
+        </div>
+    </main>
+</div>
+{% endblock %}

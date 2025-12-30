@@ -1,0 +1,264 @@
+{% extends 'base.html' %}
+
+{% block title %}Live Studio | MindFeed{% endblock %}
+
+{% block content %}
+<div class="dashboard-grid">
+    <aside class="sidebar">
+        <h3>Menu</h3>
+        <nav>
+            <a href="{{ url_for('dashboard') }}" class="nav-link">Dashboard</a>
+            <a href="{{ url_for('upload_news_page') }}" class="nav-link">Read Newspaper</a>
+            <a href="{{ url_for('live_news') }}" class="nav-link active">Live Broadcast 🎙️</a>
+            <a href="{{ url_for('history') }}" class="nav-link">Archive</a>
+            <a href="{{ url_for('auth.preferences') }}" class="nav-link">Preferences</a>
+        </nav>
+    </aside>
+
+    <main class="main-content">
+        <header style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 2rem;">
+            <div>
+                <h1>🎙️ Live News Studio</h1>
+                <p style="color: var(--text-muted);">AI-Powered Personal Radio</p>
+            </div>
+            <a href="{{ url_for('dashboard') }}" class="btn-sm btn-outline">Exit</a>
+        </header>
+
+        <div class="card" style="max-width: 800px; margin: 0 auto; padding: 2rem; text-align: center;">
+            
+            <div style="margin-bottom: 20px;">
+                <span class="status-badge" id="status" style="background: #e8f5e9; color: #27ae60; padding: 5px 15px; border-radius: 20px; font-weight: bold;">
+                    Ready to Air
+                </span>
+            </div>
+
+            <div id="teleprompter" style="
+                background: #1a1a1a; 
+                color: #e0e0e0; 
+                padding: 30px; 
+                border-radius: 12px; 
+                font-family: monospace; 
+                font-size: 1.2rem; 
+                line-height: 1.6; 
+                min-height: 150px; 
+                margin: 20px 0;
+                box-shadow: inset 0 0 20px rgba(0,0,0,0.5);
+                border: 1px solid #333;">
+                Click 'Start Broadcast' to connect to the studio...
+            </div>
+
+            <div class="controls" style="margin-top: 30px;">
+                <button id="startBtn" class="btn-sm" style="background-color: #e74c3c; border: none; font-size: 1.1rem; padding: 12px 30px;">
+                    🔴 Go Live
+                </button>
+                <button id="stopBtn" class="btn-sm btn-outline" style="margin-left: 10px; display: none;">
+                    ⏹ Stop
+                </button>
+            </div>
+            
+            <p style="margin-top: 20px; font-size: 0.8rem; color: #999;">
+                Note: News taken from Google News. Trustworthy and reliable.
+            </p>
+        </div>
+    </main>
+</div>
+
+<script>
+    // --- CONFIG ---
+    const AUDIO_INTRO = "/static/media/newsIntro.mp3";
+    const AUDIO_HEAD  = "/static/media/newsHead.mp3";
+    const AUDIO_DETAIL = "/static/media/newsDetails.mp3";
+
+    const bgmIntro = new Audio(AUDIO_INTRO);
+    const bgmHead = new Audio(AUDIO_HEAD);
+    const bgmDetail = new Audio(AUDIO_DETAIL);
+    bgmHead.loop = true;
+    bgmDetail.loop = true;
+
+    let isRunning = false;
+    const prompter = document.getElementById("teleprompter");
+    const statusBadge = document.getElementById("status");
+    const startBtn = document.getElementById("startBtn");
+    const stopBtn = document.getElementById("stopBtn");
+    const synth = window.speechSynthesis;
+    let malayalamVoice = null;
+
+    function loadVoices() {
+        const voices = synth.getVoices();
+        malayalamVoice = voices.find(v => v.lang.includes('ml'));
+    }
+    if (speechSynthesis.onvoiceschanged !== undefined) {
+        speechSynthesis.onvoiceschanged = loadVoices;
+    }
+
+    // --- ⭐ UPDATED FETCH FUNCTION FOR REPLAY ⭐ ---
+    async function fetchNews() {
+        // 1. CHECK IF REPLAY MODE (From History Page)
+        const urlParams = new URLSearchParams(window.location.search);
+        if (urlParams.get('mode') === 'replay') {
+            statusBadge.innerText = "Loading Replay Data...";
+            statusBadge.style.color = "#2980b9"; 
+            statusBadge.style.background = "#d6eaf8";
+            
+            const savedData = localStorage.getItem('replayData');
+            
+            if (savedData) {
+                console.log("Using saved history data...");
+                return JSON.parse(savedData); // Return local data, skip API
+            }
+        }
+
+        // 2. NORMAL LIVE MODE (Call API + Backend Saves to DB)
+        statusBadge.innerText = "Connecting to Latest News...";
+        statusBadge.style.color = "#d35400";
+        statusBadge.style.background = "#fdebd0";
+        
+        try {
+            const response = await fetch('/api/process-news', { method: 'POST' });
+            const data = await response.json();
+            return (data.success && data.news_data) ? data.news_data : null;
+        } catch (e) {
+            console.error(e);
+            return null;
+        }
+    }
+
+    function unlockAudio() {
+        [bgmIntro, bgmHead, bgmDetail].forEach(a => { a.play().then(() => a.pause()).catch(() => {}); });
+    }
+
+    async function startBroadcast() {
+        if (isRunning) return;
+        
+        // UI Updates
+        startBtn.style.display = "none";
+        stopBtn.style.display = "inline-block";
+        unlockAudio();
+        loadVoices();
+
+        const newsData = await fetchNews();
+        
+        if (!newsData) {
+            prompter.innerText = "Signal Lost. Please check connection.";
+            stopImmediately();
+            return;
+        }
+
+        // Update Badge if Replay or Live
+        const urlParams = new URLSearchParams(window.location.search);
+        if (urlParams.get('mode') === 'replay') {
+             statusBadge.innerText = "REPLAYING ARCHIVE";
+             statusBadge.style.background = "#8e44ad"; // Purple for replay
+        } else {
+             statusBadge.innerText = "ON AIR";
+             statusBadge.style.background = "#e74c3c"; // Red for live
+        }
+        statusBadge.style.color = "#fff";
+
+        isRunning = true;
+
+        try {
+            bgmHead.volume = 0.1;
+            bgmDetail.volume = 0.1;
+
+            // 1. Intro
+            updatePrompter("നമസ്കാരം, പ്രധാന വാർത്തകൾ...");
+            await speak("നമസ്കാരം, പ്രധാന വാർത്തകൾ...");
+            await playAudioUntilEnd(bgmIntro);
+
+            // 2. Headlines
+            updatePrompter("Headlines...");
+            bgmHead.currentTime = 0;
+            bgmHead.play();
+
+            for (let line of newsData.headlines) {
+                if (!isRunning) return;
+                updatePrompter(line);
+                await speak(line);
+                await wait(600);
+            }
+            bgmHead.pause();
+
+            // 3. Details
+            updatePrompter("വാർത്തകൾ വിശദമായി...");
+            await speak("വാർത്തകൾ വിശദമായി...");
+            
+            bgmDetail.currentTime = 0;
+            bgmDetail.volume = 0;
+            bgmDetail.play();
+            fadeIn(bgmDetail, 0.1);
+            await wait(1000);
+
+            for (let line of newsData.details) {
+                if (!isRunning) return;
+                updatePrompter(line);
+                await speak(line);
+                await wait(800);
+            }
+
+            // 4. Outro
+            updatePrompter("വാർത്തകൾ പൂർണ്ണമാകുന്നു. നന്ദി.");
+            await speak("വാർത്തകൾ പൂർണ്ണമാകുന്നു. നന്ദി, നമസ്കാരം.");
+            fadeOut(bgmDetail);
+            await playAudioUntilEnd(bgmIntro);
+
+            stopImmediately();
+
+        } catch (err) {
+            console.log(err);
+            stopImmediately();
+        }
+    }
+
+    function updatePrompter(text) {
+        // Typing effect visual
+        prompter.innerText = text;
+        prompter.style.borderLeft = "5px solid #27ae60"; // Visual indicator
+    }
+
+    // --- UTILS ---
+    function speak(text) {
+        return new Promise(resolve => {
+            if (!isRunning) { resolve(); return; }
+            synth.cancel();
+            const utter = new SpeechSynthesisUtterance(text);
+            utter.lang = 'ml-IN';
+            if(malayalamVoice) utter.voice = malayalamVoice;
+            utter.rate = 0.9;
+            utter.onend = resolve;
+            utter.onerror = resolve;
+            synth.speak(utter);
+        });
+    }
+    function playAudioUntilEnd(audio) {
+        return new Promise(resolve => {
+            if (!isRunning) { resolve(); return; }
+            audio.currentTime = 0;
+            audio.play().catch(() => resolve());
+            audio.onended = resolve;
+        });
+    }
+    function wait(ms) { return new Promise(r => setTimeout(r, ms)); }
+    function fadeIn(a, max) {
+        let v = 0; a.volume = 0;
+        let i = setInterval(() => { if(v<max) { v+=0.01; a.volume=v; } else clearInterval(i); }, 100);
+    }
+    function fadeOut(a) {
+        let i = setInterval(() => { if(a.volume>0.01) a.volume-=0.01; else { clearInterval(i); a.pause(); } }, 100);
+    }
+    function stopImmediately() {
+        isRunning = false;
+        synth.cancel();
+        bgmIntro.pause(); bgmHead.pause(); bgmDetail.pause();
+        
+        statusBadge.innerText = "Offline";
+        statusBadge.style.background = "#95a5a6";
+        startBtn.style.display = "inline-block";
+        stopBtn.style.display = "none";
+        prompter.style.borderLeft = "none";
+    }
+
+    startBtn.addEventListener('click', startBroadcast);
+    stopBtn.addEventListener('click', stopImmediately);
+</script>
+{% endblock %}

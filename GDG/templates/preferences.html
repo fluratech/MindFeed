@@ -1,0 +1,263 @@
+{% extends 'base.html' %}
+
+{% block title %}Preferences | MindFeed{% endblock %}
+
+{% block content %}
+<div class="container" style="max-width: 800px;">
+
+    <header style="text-align: center; margin-bottom: 3rem;">
+        <h2>Design Your Experience</h2>
+        <p style="color: var(--text-muted);">Customize how our AI analyzes and presents your daily briefing.</p>
+    </header>
+
+    <div id="message" class="message"></div>
+
+    <form id="preferences-form">
+        <!-- Section 1: Interest DNA -->
+        <section style="margin-bottom: 4rem;">
+            <div style="display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 1.5rem;">
+                <h3>Interest DNA <span
+                        style="font-size: 0.9rem; font-weight: normal; color: var(--text-muted); margin-left: 0.5rem;">Select
+                        active topics</span></h3>
+            </div>
+
+            <div class="topics-grid" id="topics-container">
+                <!-- Injected via JS -->
+            </div>
+        </section>
+
+        <!-- Section 2: Content Depth -->
+        <section style="margin-bottom: 4rem;">
+            <h3 style="margin-bottom: 1.5rem;">Content Depth</h3>
+
+            <div class="depth-control-wrapper">
+                <div class="depth-option" data-value="concise" onclick="selectDepth('concise')">
+                    <span class="depth-icon">⚡</span>
+                    <span class="depth-label">Quick Scan</span>
+                </div>
+                <div class="depth-option" data-value="balanced" onclick="selectDepth('balanced')">
+                    <span class="depth-icon">📄</span>
+                    <span class="depth-label">Standard</span>
+                </div>
+                <div class="depth-option" data-value="detailed" onclick="selectDepth('detailed')">
+                    <span class="depth-icon">🔍</span>
+                    <span class="depth-label">Deep Dive</span>
+                </div>
+            </div>
+
+            <div class="preview-box" id="depth-preview">
+                Select a depth above to see a preview of how your news will look.
+            </div>
+            <input type="hidden" name="summary_length" id="depth-input">
+        </section>
+
+        <!-- Section 3: Reading Time -->
+        <section style="margin-bottom: 4rem;">
+            <h3 style="margin-bottom: 1.5rem;">Session Duration</h3>
+            <p style="margin-bottom: 1rem; color: var(--text-muted);">How much time do you have for news today?</p>
+
+            <div class="time-options">
+                <div class="time-card" data-value="2" onclick="selectTime('2')">
+                    <div class="time-value">2</div>
+                    <div class="time-label">Minutes</div>
+                </div>
+                <div class="time-card" data-value="5" onclick="selectTime('5')">
+                    <div class="time-value">5</div>
+                    <div class="time-label">Minutes</div>
+                </div>
+                <div class="time-card" data-value="10" onclick="selectTime('10')">
+                    <div class="time-value">10</div>
+                    <div class="time-label">Minutes</div>
+                </div>
+            </div>
+            <input type="hidden" name="reading_time" id="time-input">
+        </section>
+
+        <div
+            style="position: sticky; bottom: 2rem; background: var(--bg-body); padding-top: 1rem; border-top: 1px solid var(--border);">
+            <button type="submit" class="auth-btn">Save Preferences</button>
+        </div>
+    </form>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+    // Initial State from Server
+    const savedPreferences = {{ preferences | tojson | safe }};
+    const initialTopics = savedPreferences.topics || [];
+    // Old data structure was simple list ['Tech'], new structure might need to handle specific interest % 
+    // For now, we assume if it's in the list, it's 50% interest unless object
+    const initialDepth = savedPreferences.summary_length || 'balanced';
+    const initialTime = savedPreferences.reading_time || '5';
+
+    // Configuration
+    const AVAILABLE_TOPICS = [
+        { id: 'Technology', icon: '💻', label: 'Technology' },
+        { id: 'Finance', icon: '📈', label: 'Finance' },
+        { id: 'Health', icon: '❤️', label: 'Health' },
+        { id: 'Science', icon: '🧬', label: 'Science' },
+        { id: 'Sports', icon: '⚽', label: 'Sports' },
+        { id: 'Entertainment', icon: '🎬', label: 'Entertainment' },
+        { id: 'Startups', icon: '🚀', label: 'Startups' },
+        { id: 'Space', icon: '🪐', label: 'Space' },
+        { id: 'Politics', icon: '🏛️', label: 'Politics' },
+        { id: 'World', icon: '🌍', label: 'World News' },
+        { id: 'Kerala', icon: '📍', label: 'Local News' },
+    ];
+
+    const DEPTH_PREVIEWS = {
+        'concise': "• Tech giant unveils new AI model.\\n• Stock market rallies on positive data.\\n• New medical breakthrough announced.",
+        'balanced': "Tech giant unveiled a new AI model today that claims to solve complex problems 2x faster. Meanwhile, the stock market rallied as inflation data came in lower than expected, signaling economic stability.",
+        'detailed': "In a major announcement, the tech giant revealed their latest AI architecture, focusing on transformer efficiency. Benchmarks show a 200% speed improvement. Analyts suggest this could disrupt the cloud computing sector. Markets reacted positively, with the NASDAQ rising 2%..."
+    };
+
+    // State Management
+    let selectedTopics = {}; // { 'Technology': 80, 'Finance': 50 }
+
+    function init() {
+        // 1. Initialize Topics
+        const container = document.getElementById('topics-container');
+
+        // Parse existing topics
+        if (Array.isArray(initialTopics)) {
+            // Handle migration from old simple list [str] to map
+            initialTopics.forEach(t => {
+                if (typeof t === 'string') selectedTopics[t] = 50;
+                else selectedTopics[t.id] = t.interest;
+            });
+        } else {
+            selectedTopics = initialTopics;
+        }
+
+        AVAILABLE_TOPICS.forEach(topic => {
+            const isSelected = selectedTopics.hasOwnProperty(topic.id);
+            const intensity = isSelected ? selectedTopics[topic.id] : 50;
+
+            const card = document.createElement('div');
+            card.className = `topic-card ${isSelected ? 'active' : ''}`;
+            card.onclick = (e) => toggleTopic(e, topic.id);
+            card.id = `topic-${topic.id}`;
+
+            card.innerHTML = `
+            <div class="topic-header">
+                <span><span class="topic-icon">${topic.icon}</span> ${topic.label}</span>
+                ${isSelected ? '<span>✔</span>' : ''}
+            </div>
+            <div class="topic-slider-container" onclick="event.stopPropagation()">
+                <input type="range" class="interest-slider" min="10" max="100" value="${intensity}" 
+                       oninput="updateInterest('${topic.id}', this.value)">
+                <div class="interest-value" id="val-${topic.id}">${intensity}% Interest</div>
+            </div>
+        `;
+            container.appendChild(card);
+        });
+
+        // 2. Initialize Selection
+        selectDepth(initialDepth);
+        selectTime(initialTime);
+    }
+
+    // Logic
+    function toggleTopic(e, id) {
+        // If clicking slider, don't toggle
+        if (e.target.tagName === 'INPUT') return;
+
+        const card = document.getElementById(`topic-${id}`);
+
+        if (selectedTopics[id]) {
+            delete selectedTopics[id];
+            card.classList.remove('active');
+            card.querySelector('.topic-header').innerHTML = card.querySelector('.topic-header').innerText.replace('✔', ''); // Simple cleanup, can be optimized
+            // Re-render header properly to restore icon span lost by innerText replacement if done lazily
+            // Better:
+            const topic = AVAILABLE_TOPICS.find(t => t.id === id);
+            card.querySelector('.topic-header').innerHTML = `<span><span class="topic-icon">${topic.icon}</span> ${topic.label}</span>`;
+        } else {
+            selectedTopics[id] = 50;
+            card.classList.add('active');
+            // Add checkmark
+            const header = card.querySelector('.topic-header');
+            if (!header.innerText.includes('✔')) {
+                header.insertAdjacentHTML('beforeend', '<span>✔</span>');
+            }
+        }
+    }
+
+    function updateInterest(id, value) {
+        if (selectedTopics[id]) {
+            selectedTopics[id] = parseInt(value);
+            document.getElementById(`val-${id}`).innerText = `${value}% Interest`;
+        }
+    }
+
+    function selectDepth(val) {
+        document.getElementById('depth-input').value = val;
+
+        document.querySelectorAll('.depth-option').forEach(el => {
+            el.classList.toggle('active', el.dataset.value === val);
+        });
+
+        const preview = document.getElementById('depth-preview');
+        preview.style.opacity = '0';
+        setTimeout(() => {
+            preview.innerText = DEPTH_PREVIEWS[val];
+            preview.style.opacity = '1';
+        }, 200);
+    }
+
+    function selectTime(val) {
+        document.getElementById('time-input').value = val;
+
+        document.querySelectorAll('.time-card').forEach(el => {
+            el.classList.toggle('active', el.dataset.value === val);
+        });
+    }
+
+    // Submission
+    document.getElementById('preferences-form').addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const btn = e.target.querySelector('button');
+        btn.textContent = 'Saving...';
+        btn.disabled = true;
+
+        // Convert state to backend format
+        // We want to save specific interest levels now
+        // Backend expects 'topics' list usually, let's see if we can save object or list of objects
+        // routes.py stores db.JSON, so we can save structure:
+        // { topics: [{id: 'Tech', interest: 80}], summary_length: '...', reading_time: '5' }
+
+        const topicsList = Object.entries(selectedTopics).map(([id, interest]) => ({ id, interest }));
+
+        const payload = {
+            topics: topicsList,
+            summary_length: document.getElementById('depth-input').value,
+            reading_time: document.getElementById('time-input').value
+        };
+
+        try {
+            const res = await fetch('/auth/preferences', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            });
+
+            if (res.ok) {
+                const msg = document.getElementById('message');
+                msg.textContent = 'Preferences saved successfully!';
+                msg.className = 'message success';
+                msg.style.display = 'block';
+                setTimeout(() => msg.style.display = 'none', 3000);
+            }
+        } catch (err) {
+            console.error(err);
+        } finally {
+            btn.textContent = 'Save Preferences';
+            btn.disabled = false;
+        }
+    });
+
+    // Run
+    init();
+</script>
+{% endblock %}

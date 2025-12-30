@@ -1,0 +1,39 @@
+{% extends 'base.html' %}
+
+{% block title %}Login | MindFeed{% endblock %}
+
+{% block content %}
+<div class="auth-container">
+    <div class="card">
+        <h2>Welcome Back</h2>
+        <p style="text-align: center; color: var(--text-muted); margin-bottom: 2rem;">Sign in to continue to your
+            dashboard</p>
+
+        <div id="message" class="message"></div>
+
+        <form id="login-form">
+            <div class="form-group">
+                <label>Email Address</label>
+                <input type="email" name="email" class="form-control" required placeholder="name@company.com">
+            </div>
+            <div class="form-group">
+                <label>Password</label>
+                <input type="password" name="password" class="form-control" required placeholder="Min. 8 characters">
+            </div>
+            <button type="submit" class="auth-btn">Sign In</button>
+        </form>
+
+        <div class="links">
+            <a href="#">Forgot Password?</a>
+            <div style="margin-top: 1rem;">
+                <span style="color: var(--text-muted)">New here?</span>
+                <a href="{{ url_for('auth.register') }}">Create an account</a>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script src="{{ url_for('static', filename='js/auth.js') }}"></script>
+{% endblock %}

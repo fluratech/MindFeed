@@ -1,0 +1,98 @@
+{% extends 'base.html' %}
+
+{% block title %}History | MindFeed{% endblock %}
+
+{% block content %}
+<div class="container" style="max-width: 800px;">
+    <header style="margin-bottom: 2rem; display: flex; justify-content: space-between; align-items: flex-end; flex-wrap: wrap; gap: 1rem;">
+        <div>
+            <h2>Your Briefing History</h2>
+            <p style="color: var(--text-muted);">Past AI summaries generated for you.</p>
+        </div>
+
+        <form action="{{ url_for('history') }}" method="GET" style="display: flex; gap: 0.5rem; align-items: center;">
+            <div style="position: relative;">
+                <input type="date" name="date" class="form-control" value="{{ selected_date if selected_date else '' }}"
+                    style="padding: 0.5rem; font-family: var(--font-body);" onchange="this.form.submit()">
+            </div>
+            {% if selected_date %}
+            <a href="{{ url_for('history') }}" class="btn-sm btn-outline" style="text-decoration: none; padding: 0.5rem 0.8rem;">Clear</a>
+            {% endif %}
+        </form>
+    </header>
+
+    {% if history %}
+    <div class="history-list">
+        {% for item in history %}
+        <div class="card" style="margin-bottom: 1.5rem; padding: 1.5rem; transition: transform 0.2s;">
+            <div style="display: flex; justify-content: space-between; margin-bottom: 1rem; align-items: baseline;">
+                <span style="font-weight: 700; font-family: var(--font-heading); font-size: 1.1rem; color: var(--text-main);">
+                    {{ item.summary_date.strftime('%A, %B %d, %Y') }}
+                </span>
+                <span style="font-size: 0.85rem; color: var(--text-muted); background: var(--bg-body); padding: 0.2rem 0.6rem; border-radius: 20px;">
+                    {{ item.created_at.strftime('%H:%M') }}
+                </span>
+            </div>
+
+            <div class="summary-content" style="white-space: pre-wrap; color: var(--text-main); line-height: 1.7;">{{ item.content }}</div>
+
+            <textarea id="data-{{ item.id }}" style="display:none;">{{ item.meta_data | tojson }}</textarea>
+
+            <div style="margin-top: 1.5rem; padding-top: 1rem; border-top: 1px dashed var(--border); display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 1rem;">
+                
+                <div style="display: flex; gap: 0.5rem; flex-wrap: wrap;">
+                    {% if item.meta_data and item.meta_data.topics %}
+                        {% for t in item.meta_data.topics %}
+                        <span style="font-size: 0.75rem; background: rgba(37, 99, 235, 0.1); color: var(--primary); padding: 0.2rem 0.6rem; border-radius: 4px;">
+                            {{ t.id if t.id else t }}
+                        </span>
+                        {% endfor %}
+                    {% else %}
+                        <span style="font-size: 0.75rem; color: var(--text-muted);">General Briefing</span>
+                    {% endif %}
+                </div>
+
+                <button onclick="replayNews('{{ item.id }}')" class="btn-sm" style="background-color: #27ae60; color: white; border: none; padding: 8px 16px; font-size: 0.9rem; cursor: pointer; border-radius: 5px;">
+                    ▶ Replay Audio
+                </button>
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+    {% else %}
+    <div style="text-align: center; padding: 4rem 2rem; background: var(--bg-card); border-radius: 12px; border: 1px dashed var(--border);">
+        <div style="font-size: 3rem; margin-bottom: 1rem; opacity: 0.5;">📅</div>
+        <p style="font-size: 1.2rem; margin-bottom: 0.5rem; font-weight: 600;">No history found</p>
+        <p style="color: var(--text-muted);">
+            {% if selected_date %}
+            No summaries found for {{ selected_date }}. <a href="{{ url_for('history') }}">View all</a>
+            {% else %}
+            Generate your first news summary to see it here.
+            {% endif %}
+        </p>
+    </div>
+    {% endif %}
+</div>
+
+<script>
+    function replayNews(id) {
+        // 1. Get the hidden JSON data for this specific card
+        const dataStr = document.getElementById(`data-${id}`).value;
+        
+        try {
+            const data = JSON.parse(dataStr);
+            
+            // 2. Save it to LocalStorage so the Live Page can read it
+            localStorage.setItem('replayData', JSON.stringify(data));
+            
+            // 3. Redirect to the Live News page in 'replay' mode
+            window.location.href = "{{ url_for('live_news') }}?mode=replay";
+            
+        } catch(e) {
+            console.error(e);
+            alert("Error: Could not load replay data.");
+        }
+    }
+</script>
+
+{% endblock %}

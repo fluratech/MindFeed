@@ -1,0 +1,94 @@
+{% extends 'base.html' %}
+
+{% block title %}Summarize Link | MindFeed{% endblock %}
+
+{% block content %}
+<div class="dashboard-grid">
+    <aside class="sidebar">
+        <h3>Menu</h3>
+        <nav>
+            <a href="{{ url_for('dashboard') }}" class="nav-link">Dashboard</a>
+            <a href="{{ url_for('live_news') }}" class="nav-link">Live Broadcast 🎙️</a>
+            <a href="{{ url_for('upload_news_page') }}" class="nav-link">Read Newspaper 📄</a>
+            <a href="{{ url_for('upload_link_page') }}" class="nav-link active">Summarize Link </a>
+            <a href="{{ url_for('history') }}" class="nav-link">Archive</a>
+            <a href="{{ url_for('auth.preferences') }}" class="nav-link">Preferences</a>
+        </nav>
+    </aside>
+
+    <main class="main-content">
+        
+        <div id="input-section" style="max-width: 600px; margin: 0 auto; text-align: center; padding-top: 2rem;">
+            <header style="margin-bottom: 2rem;">
+                <h1>Summarize Article</h1>
+                <p style="color: var(--text-muted);">Paste a news link (Mathrubhumi, Manorama, etc.) to listen to it.</p>
+            </header>
+
+            <div class="card" style="padding: 3rem; border-radius: 15px;">
+                <div style="font-size: 3rem; margin-bottom: 1rem;">🔗</div>
+                
+                <input type="url" id="url-input" placeholder="https://..." 
+                       class="form-control" 
+                       style="width: 100%; padding: 12px; margin-bottom: 1.5rem; border: 1px solid #ddd; border-radius: 8px; font-size: 1rem;">
+                
+                <button onclick="processLink()" class="btn-sm" style="width: 100%; font-size: 1rem; padding: 12px;">
+                    ✨ Summarize & Listen
+                </button>
+            </div>
+            
+            <div id="loading" style="display: none; margin-top: 2rem;">
+                <div style="font-size: 1.2rem; color: #8e44ad; font-weight: bold; margin-bottom: 10px;">
+                    🤖 AI is reading the website...
+                </div>
+                <p style="color: #666;">Removing ads and summarizing content...</p>
+                <div style="width: 50px; height: 50px; border: 5px solid #f3f3f3; border-top: 5px solid #8e44ad; border-radius: 50%; animation: spin 1s linear infinite; margin: 20px auto;"></div>
+            </div>
+        </div>
+
+    </main>
+</div>
+
+<style>
+    @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+</style>
+
+<script>
+    async function processLink() {
+        const urlInput = document.getElementById('url-input');
+        const url = urlInput.value.trim();
+        const loadingDiv = document.getElementById('loading');
+        const card = document.querySelector('.card');
+
+        if (!url) { alert("Please paste a valid URL."); return; }
+
+        // 1. Show Loading UI
+        card.style.display = 'none';
+        loadingDiv.style.display = 'block';
+
+        try {
+            // 2. Send Link to Backend
+            const res = await fetch('/api/process-link', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ url: url })
+            });
+            const data = await res.json();
+
+            if (data.success) {
+                // 3. Save Result to LocalStorage
+                localStorage.setItem('replayData', JSON.stringify(data.news_data));
+                
+                // 4. Go to Live Studio (Replay Mode)
+                window.location.href = "{{ url_for('live_news') }}?mode=replay";
+            } else {
+                alert("Error: " + data.message);
+                location.reload();
+            }
+        } catch (e) {
+            console.error(e);
+            alert("Network Error");
+            location.reload();
+        }
+    }
+</script>
+{% endblock %}
