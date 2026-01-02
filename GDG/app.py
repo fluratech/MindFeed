@@ -258,7 +258,7 @@ def create_app():
 
         try:
             response = client.models.generate_content(
-                model='gemma-3-27b-it', 
+                model='gemini-2.5-flash-lite', 
                 contents=prompt
             )
             cleaned_json = clean_json_string(response.text)
