@@ -16,7 +16,7 @@ load_dotenv()
 
 # --- CONFIGURATION ---
 # ⚠️ REPLACE WITH YOUR ACTUAL API KEY
-GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "AIzaSyArUhdCpqR01kgN-aXUP_0yM-v6Udkoo2M")
+GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 client = genai.Client(api_key=GEMINI_API_KEY)
 
 # --- HELPER: INDIAN STANDARD TIME ---
