@@ -21,7 +21,7 @@
         <div id="input-section" style="max-width: 600px; margin: 0 auto; text-align: center; padding-top: 2rem;">
             <header style="margin-bottom: 2rem;">
                 <h1>Summarize Article</h1>
-                <p style="color: var(--text-muted);">Paste a news link (Mathrubhumi, Manorama, etc.) to listen to it.</p>
+                <p style="color: var(--text-muted);">Paste a news link (Mathrubhumi, BBC, etc.) to listen to it.</p>
             </header>
 
             <div class="card" style="padding: 3rem; border-radius: 15px;">
@@ -79,6 +79,7 @@
                 localStorage.setItem('replayData', JSON.stringify(data.news_data));
                 
                 // 4. Go to Live Studio (Replay Mode)
+                // Note: The Live Studio (live_news.html) now has auto-detection for language built-in!
                 window.location.href = "{{ url_for('live_news') }}?mode=replay";
             } else {
                 alert("Error: " + data.message);
