@@ -12,6 +12,7 @@ import urllib.parse
 import PyPDF2
 from werkzeug.utils import secure_filename
 from bs4 import BeautifulSoup
+import time
 
 load_dotenv()
 
@@ -27,15 +28,41 @@ def get_ist_now():
     """Returns current time in IST"""
     return datetime.now(IST)
 
+# --- HELPER: AI RETRY LOGIC (Fixes 503 Errors) ---
+def call_gemini_with_retry(prompt, model='gemini-2.5-flash-lite'):
+    max_retries = 3
+    for attempt in range(max_retries):
+        try:
+            response = client.models.generate_content(
+                model=model, 
+                contents=prompt
+            )
+            return response
+        except Exception as e:
+            if "503" in str(e) or "overloaded" in str(e).lower() or "429" in str(e):
+                if attempt < max_retries - 1:
+                    print(f"⚠️ Model overloaded. Retrying in 5 seconds... (Attempt {attempt+1})")
+                    time.sleep(5)
+                else:
+                    raise e
+            else:
+                raise e
+
+def clean_json_string(text):
+    """Removes Markdown formatting from AI response"""
+    text = text.strip()
+    if text.startswith("```json"): text = text.replace("```json", "", 1)
+    if text.startswith("```"): text = text.replace("```", "", 1)
+    if text.endswith("```"): text = text.replace("```", "", 1)
+    return text.strip()
+
 # --- HELPER: EXTRACT TEXT FROM PDF (MEMORY SAFE) ---
 def extract_text_from_pdf(file_path):
     """Extracts text from an uploaded PDF file saved on disk."""
     try:
-        # Open the file from disk (saves RAM)
         with open(file_path, 'rb') as f:
             pdf_reader = PyPDF2.PdfReader(f)
             text = ""
-            # Limit to first 15 pages to prevent timeouts
             max_pages = min(len(pdf_reader.pages), 15) 
             for page_num in range(max_pages):
                 page = pdf_reader.pages[page_num]
@@ -57,27 +84,16 @@ def extract_text_from_url(url):
         
         soup = BeautifulSoup(response.content, 'html.parser')
         
-        # Kill all script and style elements (removes ads/tracking code)
+        # Kill all script and style elements
         for script in soup(["script", "style", "nav", "footer", "header"]):
             script.extract()    
 
-        # Get text from paragraph tags (most news sites store articles in <p>)
         text = " ".join([p.get_text() for p in soup.find_all('p')])
-        
-        # Clean up whitespace
         return " ".join(text.split())
         
     except Exception as e:
         print(f"Scraping Error: {e}")
         return ""
-
-def clean_json_string(text):
-    """Removes Markdown formatting from AI response"""
-    text = text.strip()
-    if text.startswith("```json"): text = text.replace("```json", "", 1)
-    if text.startswith("```"): text = text.replace("```", "", 1)
-    if text.endswith("```"): text = text.replace("```", "", 1)
-    return text.strip()
 
 # --- HELPER: DYNAMIC RSS FETCH ---
 def fetch_rss_news_for_topics(topics):
@@ -96,12 +112,9 @@ def fetch_rss_news_for_topics(topics):
         if not query_term: continue
 
         encoded_topic = urllib.parse.quote(query_term)
-        # Fetching English news from India region for better global coverage, 
-        # AI will translate if needed based on user pref
         rss_url = f"https://news.google.com/rss/search?q={encoded_topic}&hl=en-IN&gl=IN&ceid=IN:en"
         
         try:
-            # print(f"   -> {query_term}: {rss_url}")
             response = requests.get(rss_url, headers=headers, timeout=4)
             if response.status_code == 200:
                 feed = feedparser.parse(BytesIO(response.content))
@@ -122,7 +135,6 @@ def fetch_rss_news_for_topics(topics):
 def generate_ai_news(topics, language='malayalam'):
     raw_text = fetch_rss_news_for_topics(topics)
     
-    # 1. Set Language Config
     if language.lower() == 'english':
         role = "You are a professional English Radio News Editor."
         lang_instruction = "Language: English."
@@ -142,7 +154,6 @@ def generate_ai_news(topics, language='malayalam'):
         print("⚠️ RSS Empty. Using Backup.")
         return backup_data
 
-    # 2. Build Prompt
     prompt = f"""
     {role}
     The listener is interested in these topics: {", ".join(topics)}.
@@ -165,10 +176,7 @@ def generate_ai_news(topics, language='malayalam'):
     """
 
     try:
-        response = client.models.generate_content(
-            model='gemini-2.5-flash-lite', 
-            contents=prompt
-        )
+        response = call_gemini_with_retry(prompt)
         cleaned = clean_json_string(response.text)
         return json.loads(cleaned)
     except Exception as e:
@@ -181,7 +189,6 @@ def create_app():
     app.config['SQLALCHEMY_DATABASE_URI'] = os.environ.get('DATABASE_URL', 'sqlite:///database.db')
     app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
     
-    # Increase max upload size to 16MB
     app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024 
 
     db.init_app(app)
@@ -215,7 +222,6 @@ def create_app():
         if selected_date:
             query = query.filter(History.summary_date == selected_date)
         
-        # Sort by Newest First
         user_history = query.order_by(History.created_at.desc()).all()
             
         return render_template('history.html', history=user_history, selected_date=selected_date)
@@ -236,31 +242,25 @@ def create_app():
         file = request.files['file']
         if file.filename == '': return jsonify({'success': False, 'message': 'No file selected'}), 400
 
-        # --- FIX: SAVE TO TEMP FILE FIRST (Prevents Memory Crash) ---
         filename = secure_filename(file.filename)
         temp_path = os.path.join('/tmp', filename) 
-        # Note: '/tmp' works on Render/Linux.
         if not os.path.exists('/tmp'): os.makedirs('/tmp')
         
         try:
             file.save(temp_path)
-            print(f"📄 Processing PDF from disk: {filename}")
             raw_text = extract_text_from_pdf(temp_path)
         except Exception as e:
             return jsonify({'success': False, 'message': f'File save error: {str(e)}'}), 500
         finally:
-            # Clean up: Delete the file after extracting text
             if os.path.exists(temp_path):
                 os.remove(temp_path)
         
         if len(raw_text) < 100:
             return jsonify({'success': False, 'message': 'Could not read text. Is this an image scan?'}), 400
 
-        # Get User & Preferences
         user = db.session.get(User, session['user_id'])
         user_prefs = user.preferences if user.preferences else {}
         
-        # 1. Get Topics
         user_topics = user_prefs.get('topics', [])
         cleaned_topics = []
         for t in user_topics:
@@ -268,7 +268,6 @@ def create_app():
             else: cleaned_topics.append(str(t))
         if not cleaned_topics: cleaned_topics = ["General News"]
 
-        # 2. Get Language
         user_language = user_prefs.get('language', 'malayalam').lower()
         if user_language == 'english':
             role = "You are a professional English Radio News Editor."
@@ -277,8 +276,6 @@ def create_app():
             role = "You are a professional Malayalam Radio News Editor."
             lang_instruction = "Language: Malayalam."
 
-        print(f"🧠 Filtering PDF for topics: {cleaned_topics} in {user_language}")
-        
         prompt = f"""
         {role}
         I have uploaded a newspaper PDF. 
@@ -303,14 +300,10 @@ def create_app():
         """
 
         try:
-            response = client.models.generate_content(
-                model='gemini-2.5-flash', 
-                contents=prompt
-            )
+            response = call_gemini_with_retry(prompt)
             cleaned_json = clean_json_string(response.text)
             news_data = json.loads(cleaned_json)
 
-            # --- SAVE PDF HISTORY ---
             try:
                 headlines = news_data.get('headlines', [])
                 summary_text = f"PDF: {file.filename} | " + (" | ".join(headlines) if headlines else "")
@@ -324,12 +317,11 @@ def create_app():
                 )
                 db.session.add(new_history)
                 db.session.commit()
-                print(f"✅ PDF History SAVED for User {user.id}")
             except Exception as db_e:
                 db.session.rollback()
                 print(f"❌ PDF DB Save Error: {db_e}")
             
-            return jsonify({'success': True, 'news_data': news_data})
+            return jsonify({'success': True, 'news_data': news_data, 'language': user_language})
             
         except Exception as e:
             print(f"❌ AI PDF Error: {e}")
@@ -338,31 +330,23 @@ def create_app():
     # ROUTE 3: Upload Link Page
     @app.route('/upload-link')
     def upload_link_page():
-        if 'user_id' not in session:
-            return redirect(url_for('auth.login'))
+        if 'user_id' not in session: return redirect(url_for('auth.login'))
         return render_template('upload_link.html')
 
     # API 3: PROCESS NEWS LINK
     @app.route('/api/process-link', methods=['POST'])
     def process_link():
-        if 'user_id' not in session:
-            return jsonify({'success': False, 'message': 'Unauthorized'}), 401
+        if 'user_id' not in session: return jsonify({'success': False, 'message': 'Unauthorized'}), 401
 
         data = request.get_json()
         url = data.get('url')
         
-        if not url:
-            return jsonify({'success': False, 'message': 'No URL provided'}), 400
+        if not url: return jsonify({'success': False, 'message': 'No URL provided'}), 400
 
-        print(f"🔗 Processing URL: {url}")
-        
-        # 1. Scrape Text
         raw_text = extract_text_from_url(url)
-        
         if len(raw_text) < 200:
             return jsonify({'success': False, 'message': 'Could not extract enough text. It might be behind a paywall.'}), 400
 
-        # 2. Get User & Language
         user = db.session.get(User, session['user_id'])
         user_prefs = user.preferences if user.preferences else {}
         user_language = user_prefs.get('language', 'malayalam').lower()
@@ -374,7 +358,6 @@ def create_app():
             role = "You are a professional Malayalam Radio News Editor."
             lang_instruction = "Language: Malayalam."
         
-        # 3. AI Generate
         prompt = f"""
         {role}
         I have provided the raw text of a news article below.
@@ -396,14 +379,10 @@ def create_app():
         """
 
         try:
-            response = client.models.generate_content(
-                model='gemini-2.5-flash', 
-                contents=prompt
-            )
+            response = call_gemini_with_retry(prompt)
             cleaned_json = clean_json_string(response.text)
             news_data = json.loads(cleaned_json)
 
-            # 4. Save to History
             try:
                 headlines = news_data.get('headlines', [])
                 summary_text = f"Link: {url[:30]}... | " + (" | ".join(headlines) if headlines else "")
@@ -421,7 +400,7 @@ def create_app():
                 db.session.rollback()
                 print(f"History Save Error: {e}")
 
-            return jsonify({'success': True, 'news_data': news_data})
+            return jsonify({'success': True, 'news_data': news_data, 'language': user_language})
 
         except Exception as e:
             print(f"❌ AI Link Error: {e}")
@@ -435,10 +414,8 @@ def create_app():
         user = db.session.get(User, session['user_id'])
         if not user: return jsonify({'success': False, 'message': 'User not found'}), 404
 
-        # Safe Preferences Loading
         user_prefs = user.preferences if user.preferences else {}
         
-        # Get Topics
         user_topics = user_prefs.get('topics', [])
         cleaned_topics = []
         for t in user_topics:
@@ -446,34 +423,29 @@ def create_app():
             else: cleaned_topics.append(str(t))
         if not cleaned_topics: cleaned_topics = ["Kerala"]
 
-        # Get Language
         user_language = user_prefs.get('language', 'malayalam').lower()
 
-        print(f"👤 User {user.id} requested topics: {cleaned_topics} in {user_language}")
-
-        # Pass language to the generator
         news_data = generate_ai_news(cleaned_topics, user_language)
         
-        # Save History
         try:
             headlines = news_data.get('headlines', [])
             summary_text = " | ".join(headlines) if headlines else "News Briefing"
 
             new_history = History(
                 user_id=user.id,
-                summary_date=get_ist_now().date(),  # Uses IST
-                created_at=get_ist_now(),           # Uses IST
+                summary_date=get_ist_now().date(), 
+                created_at=get_ist_now(),     
                 content=summary_text[:500], 
                 meta_data=news_data 
             )
             db.session.add(new_history)
             db.session.commit()
-            print(f"✅ RSS History SAVED for User {user.id}")
         except Exception as e:
             db.session.rollback()
             print(f"❌ History Save Error: {e}")
 
-        return jsonify({'success': True, 'news_data': news_data})
+        # ⭐ RETURNING LANGUAGE HERE ⭐
+        return jsonify({'success': True, 'news_data': news_data, 'language': user_language})
 
     with app.app_context():
         db.create_all()
