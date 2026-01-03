@@ -1,17 +1,8 @@
 from flask import Blueprint, render_template, request, redirect, url_for, flash, session, jsonify
 from datetime import datetime
 from werkzeug.security import generate_password_hash, check_password_hash
-# We need to import db and User. 
-# Since they are in app.py, we need to handle circular imports.
-# A better way for this structure is to have db defined separately. 
-# I will assume I can import `from app import db, User` but app.py imports auth.routes.
-# To break this, I will move db and User to a separate file `database.py` even if not in the prompt list, 
-# because "Production-quality" implies working code.
-# OR I can define the blueprint here and import it in app.py (done), 
-# and import db/User inside the functions or use current_app extensions?
-# No, standard is `models.py`. I will add `models.py`.
-
-from models import db, User, History 
+from models import db, User, History
+from sqlalchemy.orm.attributes import flag_modified  # <--- The Fix
 
 auth_bp = Blueprint('auth', __name__, url_prefix='/auth')
 
@@ -49,7 +40,8 @@ def register():
         # Extract preferences
         preferences = {
             'topics': data.get('topics', []),
-            'summary_length': data.get('summary_length', 'balanced')
+            'summary_length': data.get('summary_length', 'balanced'),
+            'language': 'malayalam' # Default lang
         }
         
         new_user = User(name=name, email=email, password_hash=hashed_pw, preferences=preferences)
@@ -65,7 +57,7 @@ def preferences():
     if 'user_id' not in session:
         return redirect(url_for('auth.login'))
         
-    user = User.query.get(session['user_id'])
+    user = db.session.get(User, session['user_id'])
     
     if not user:
         session.clear()
@@ -73,24 +65,32 @@ def preferences():
     
     if request.method == 'POST':
         data = request.json
-        # Merge new preferences with existing ones to avoid data loss if we add more fields later
-        current_prefs = user.preferences or {}
-        # Validate and sanitize data
-        # Ensure topics is a list of objects or strings, normalize to list of objects
-        raw_topics = data.get('topics', [])
-        # ... validation logic could go here ...
         
-        current_prefs['topics'] = raw_topics
-        current_prefs['summary_length'] = data.get('summary_length', 'balanced')
-        current_prefs['reading_time'] = data.get('reading_time', '5')
+        # 1. Get current preferences safely
+        current_prefs = user.preferences if user.preferences else {}
         
-        user.preferences = current_prefs
+        # 2. Update dictionary
+        # We create a new dict to ensure Python treats it as a fresh object
+        updated_prefs = dict(current_prefs)
         
-        from sqlalchemy.orm.attributes import flag_modified
+        # Update fields
+        if 'topics' in data: updated_prefs['topics'] = data['topics']
+        if 'summary_length' in data: updated_prefs['summary_length'] = data['summary_length']
+        if 'reading_time' in data: updated_prefs['reading_time'] = data['reading_time']
+        if 'language' in data: updated_prefs['language'] = data['language'] # <--- Save Language
+        
+        # 3. Assign back
+        user.preferences = updated_prefs
+        
+        # 4. 🔥 FORCE SAVE 🔥
         flag_modified(user, "preferences")
         
-        db.session.commit()
-        return jsonify({'success': True})
+        try:
+            db.session.commit()
+            return jsonify({'success': True})
+        except Exception as e:
+            db.session.rollback()
+            return jsonify({'success': False, 'message': str(e)}), 500
         
     # Ensure preferences is a dict using 'or {}'
     return render_template('preferences.html', preferences=user.preferences or {})
@@ -109,7 +109,7 @@ def history():
             filter_date = datetime.strptime(selected_date, '%Y-%m-%d').date()
             query = query.filter(History.summary_date == filter_date)
         except ValueError:
-            pass # Ignore invalid date formats
+            pass 
             
     user_history = query.order_by(History.created_at.desc()).all()
     return render_template('history.html', history=user_history, selected_date=selected_date)
