@@ -42,7 +42,6 @@
             </div>
         </div>
 
-
         <div id="studio-section" style="display: none;">
             <header style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 2rem;">
                 <div>
@@ -84,6 +83,7 @@
 <script>
     // --- GLOBAL VARS ---
     let newsData = null; // Store processed data here
+    let currentLang = 'ml'; // Default
 
     // --- FILE UPLOAD LOGIC ---
     const fileInput = document.getElementById('file-input');
@@ -138,7 +138,7 @@
     }
 
 
-    // --- RADIO LOGIC (REUSED FROM LIVE NEWS) ---
+    // --- RADIO LOGIC (SMART LANGUAGE SUPPORT) ---
     const AUDIO_INTRO = "/static/media/newsIntro.mp3";
     const AUDIO_HEAD  = "/static/media/newsHead.mp3";
     const AUDIO_DETAIL = "/static/media/newsDetails.mp3";
@@ -151,16 +151,37 @@
     const prompter = document.getElementById("teleprompter");
     const statusBadge = document.getElementById("status");
     const synth = window.speechSynthesis;
-    let malayalamVoice = null;
+    let voices = [];
+
+    // Language Scripts
+    const SCRIPTS = {
+        'ml': {
+            intro: "നമസ്കാരം, പ്രധാന വാർത്തകൾ...",
+            details: "വാർത്തകൾ വിശദമായി...",
+            outro: "വാർത്തകൾ പൂർണ്ണമാകുന്നു. നന്ദി, നമസ്കാരം.",
+            voiceCode: 'ml-IN'
+        },
+        'en': {
+            intro: "Hello, here is your personalized news summary...",
+            details: "Here are the details...",
+            outro: "That concludes your briefing. Thank you.",
+            voiceCode: 'en-US'
+        }
+    };
 
     function loadVoices() {
-        const voices = synth.getVoices();
-        malayalamVoice = voices.find(v => v.lang.includes('ml'));
+        voices = synth.getVoices();
     }
     if (speechSynthesis.onvoiceschanged !== undefined) speechSynthesis.onvoiceschanged = loadVoices;
 
+    // Helper: Detect Language
+    function detectLanguage(text) {
+        const malayalamRegex = /[\u0D00-\u0D7F]/;
+        return malayalamRegex.test(text) ? 'ml' : 'en';
+    }
+
     async function startBroadcast() {
-        if (isRunning) return;
+        if (isRunning || !newsData) return;
         
         document.getElementById("startBtn").style.display = "none";
         document.getElementById("stopBtn").style.display = "inline-block";
@@ -168,6 +189,13 @@
         // Unlock Audio
         [bgmIntro, bgmHead, bgmDetail].forEach(a => { a.play().then(() => a.pause()).catch(() => {}); });
         loadVoices();
+
+        // 🧠 Auto-Detect Language from the first headline
+        if (newsData.headlines && newsData.headlines.length > 0) {
+            currentLang = detectLanguage(newsData.headlines[0]);
+        }
+        const script = SCRIPTS[currentLang];
+        console.log("Broadcast Language:", currentLang);
 
         isRunning = true;
         statusBadge.innerText = "ON AIR";
@@ -178,8 +206,8 @@
             bgmDetail.volume = 0.1;
 
             // 1. Intro
-            updatePrompter("നമസ്കാരം, പ്രധാന വാർത്തകൾ...");
-            await speak("നമസ്കാരം, പ്രധാന വാർത്തകൾ...");
+            updatePrompter(script.intro);
+            await speak(script.intro);
             await playAudioUntilEnd(bgmIntro);
 
             // 2. Headlines
@@ -196,8 +224,8 @@
             bgmHead.pause();
 
             // 3. Transition
-            updatePrompter("വാർത്തകൾ വിശദമായി...");
-            await speak("വാർത്തകൾ വിശദമായി...");
+            updatePrompter(script.details);
+            await speak(script.details);
             
             bgmDetail.currentTime = 0;
             bgmDetail.volume = 0;
@@ -214,8 +242,8 @@
             }
 
             // 5. Outro
-            updatePrompter("വാർത്തകൾ പൂർണ്ണമാകുന്നു. നന്ദി.");
-            await speak("വാർത്തകൾ പൂർണ്ണമാകുന്നു. നന്ദി, നമസ്കാരം.");
+            updatePrompter(script.outro);
+            await speak(script.outro);
             fadeOut(bgmDetail);
             await playAudioUntilEnd(bgmIntro);
 
@@ -225,18 +253,27 @@
     }
 
     function updatePrompter(text) { prompter.innerText = text; prompter.style.borderLeft = "5px solid #27ae60"; }
+    
     function speak(text) {
         return new Promise(resolve => {
             if (!isRunning) { resolve(); return; }
             synth.cancel();
+            
             const utter = new SpeechSynthesisUtterance(text);
-            utter.lang = 'ml-IN';
-            if(malayalamVoice) utter.voice = malayalamVoice;
+            const script = SCRIPTS[currentLang];
+            
+            utter.lang = script.voiceCode;
+            
+            // Try to find matching voice
+            const matchingVoice = voices.find(v => v.lang.includes(script.voiceCode.split('-')[0]));
+            if(matchingVoice) utter.voice = matchingVoice;
+            
             utter.rate = 0.9;
             utter.onend = resolve; utter.onerror = resolve;
             synth.speak(utter);
         });
     }
+
     function playAudioUntilEnd(audio) {
         return new Promise(resolve => {
             if (!isRunning) { resolve(); return; }
