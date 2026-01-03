@@ -13,7 +13,6 @@
     <div id="message" class="message"></div>
 
     <form id="preferences-form">
-        <!-- Section 1: Interest DNA -->
         <section style="margin-bottom: 4rem;">
             <div style="display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 1.5rem;">
                 <h3>Interest DNA <span
@@ -22,11 +21,26 @@
             </div>
 
             <div class="topics-grid" id="topics-container">
-                <!-- Injected via JS -->
-            </div>
+                </div>
         </section>
 
-        <!-- Section 2: Content Depth -->
+        <section style="margin-bottom: 4rem;">
+            <h3 style="margin-bottom: 1.5rem;">Broadcast Language</h3>
+            <p style="margin-bottom: 1rem; color: var(--text-muted);">Choose the language for your news summary and audio.</p>
+
+            <div class="depth-control-wrapper">
+                <div class="depth-option" data-lang="malayalam" onclick="selectLanguage('malayalam')">
+                    <span class="depth-icon" style="font-size: 1.5rem;">മല</span>
+                    <span class="depth-label">Malayalam</span>
+                </div>
+                <div class="depth-option" data-lang="english" onclick="selectLanguage('english')">
+                    <span class="depth-icon" style="font-size: 1.5rem;">Aa</span>
+                    <span class="depth-label">English</span>
+                </div>
+            </div>
+            <input type="hidden" name="language" id="language-input">
+        </section>
+
         <section style="margin-bottom: 4rem;">
             <h3 style="margin-bottom: 1.5rem;">Content Depth</h3>
 
@@ -51,7 +65,6 @@
             <input type="hidden" name="summary_length" id="depth-input">
         </section>
 
-        <!-- Section 3: Reading Time -->
         <section style="margin-bottom: 4rem;">
             <h3 style="margin-bottom: 1.5rem;">Session Duration</h3>
             <p style="margin-bottom: 1rem; color: var(--text-muted);">How much time do you have for news today?</p>
@@ -85,11 +98,12 @@
 <script>
     // Initial State from Server
     const savedPreferences = {{ preferences | tojson | safe }};
+    
+    // Default values if preference doesn't exist yet
     const initialTopics = savedPreferences.topics || [];
-    // Old data structure was simple list ['Tech'], new structure might need to handle specific interest % 
-    // For now, we assume if it's in the list, it's 50% interest unless object
     const initialDepth = savedPreferences.summary_length || 'balanced';
     const initialTime = savedPreferences.reading_time || '5';
+    const initialLanguage = savedPreferences.language || 'malayalam'; // NEW: Default to Malayalam
 
     // Configuration
     const AVAILABLE_TOPICS = [
@@ -107,13 +121,13 @@
     ];
 
     const DEPTH_PREVIEWS = {
-        'concise': "• Tech giant unveils new AI model.\\n• Stock market rallies on positive data.\\n• New medical breakthrough announced.",
+        'concise': "• Tech giant unveils new AI model.\n• Stock market rallies on positive data.\n• New medical breakthrough announced.",
         'balanced': "Tech giant unveiled a new AI model today that claims to solve complex problems 2x faster. Meanwhile, the stock market rallied as inflation data came in lower than expected, signaling economic stability.",
-        'detailed': "In a major announcement, the tech giant revealed their latest AI architecture, focusing on transformer efficiency. Benchmarks show a 200% speed improvement. Analyts suggest this could disrupt the cloud computing sector. Markets reacted positively, with the NASDAQ rising 2%..."
+        'detailed': "In a major announcement, the tech giant revealed their latest AI architecture, focusing on transformer efficiency. Benchmarks show a 200% speed improvement. Analysts suggest this could disrupt the cloud computing sector. Markets reacted positively, with the NASDAQ rising 2%..."
     };
 
     // State Management
-    let selectedTopics = {}; // { 'Technology': 80, 'Finance': 50 }
+    let selectedTopics = {}; 
 
     function init() {
         // 1. Initialize Topics
@@ -121,7 +135,6 @@
 
         // Parse existing topics
         if (Array.isArray(initialTopics)) {
-            // Handle migration from old simple list [str] to map
             initialTopics.forEach(t => {
                 if (typeof t === 'string') selectedTopics[t] = 50;
                 else selectedTopics[t.id] = t.interest;
@@ -156,11 +169,11 @@
         // 2. Initialize Selection
         selectDepth(initialDepth);
         selectTime(initialTime);
+        selectLanguage(initialLanguage); // NEW: Init language
     }
 
     // Logic
     function toggleTopic(e, id) {
-        // If clicking slider, don't toggle
         if (e.target.tagName === 'INPUT') return;
 
         const card = document.getElementById(`topic-${id}`);
@@ -168,15 +181,12 @@
         if (selectedTopics[id]) {
             delete selectedTopics[id];
             card.classList.remove('active');
-            card.querySelector('.topic-header').innerHTML = card.querySelector('.topic-header').innerText.replace('✔', ''); // Simple cleanup, can be optimized
-            // Re-render header properly to restore icon span lost by innerText replacement if done lazily
-            // Better:
+            // Re-render header properly to restore icon
             const topic = AVAILABLE_TOPICS.find(t => t.id === id);
             card.querySelector('.topic-header').innerHTML = `<span><span class="topic-icon">${topic.icon}</span> ${topic.label}</span>`;
         } else {
             selectedTopics[id] = 50;
             card.classList.add('active');
-            // Add checkmark
             const header = card.querySelector('.topic-header');
             if (!header.innerText.includes('✔')) {
                 header.insertAdjacentHTML('beforeend', '<span>✔</span>');
@@ -193,8 +203,7 @@
 
     function selectDepth(val) {
         document.getElementById('depth-input').value = val;
-
-        document.querySelectorAll('.depth-option').forEach(el => {
+        document.querySelectorAll('.depth-option[data-value]').forEach(el => {
             el.classList.toggle('active', el.dataset.value === val);
         });
 
@@ -206,9 +215,16 @@
         }, 200);
     }
 
+    // NEW: Language Selection Logic
+    function selectLanguage(val) {
+        document.getElementById('language-input').value = val;
+        document.querySelectorAll('.depth-option[data-lang]').forEach(el => {
+            el.classList.toggle('active', el.dataset.lang === val);
+        });
+    }
+
     function selectTime(val) {
         document.getElementById('time-input').value = val;
-
         document.querySelectorAll('.time-card').forEach(el => {
             el.classList.toggle('active', el.dataset.value === val);
         });
@@ -221,18 +237,13 @@
         btn.textContent = 'Saving...';
         btn.disabled = true;
 
-        // Convert state to backend format
-        // We want to save specific interest levels now
-        // Backend expects 'topics' list usually, let's see if we can save object or list of objects
-        // routes.py stores db.JSON, so we can save structure:
-        // { topics: [{id: 'Tech', interest: 80}], summary_length: '...', reading_time: '5' }
-
         const topicsList = Object.entries(selectedTopics).map(([id, interest]) => ({ id, interest }));
 
         const payload = {
             topics: topicsList,
             summary_length: document.getElementById('depth-input').value,
-            reading_time: document.getElementById('time-input').value
+            reading_time: document.getElementById('time-input').value,
+            language: document.getElementById('language-input').value // NEW: Send language to backend
         };
 
         try {
