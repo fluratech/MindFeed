@@ -12,10 +12,11 @@ import urllib.parse
 import PyPDF2
 from werkzeug.utils import secure_filename
 from bs4 import BeautifulSoup
+
 load_dotenv()
 
 # --- CONFIGURATION ---
-# ⚠️ REPLACE WITH YOUR ACTUAL API KEY
+# ⚠️ REPLACE WITH YOUR ACTUAL API KEY IF NOT IN ENV
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 client = genai.Client(api_key=GEMINI_API_KEY)
 
@@ -26,16 +27,19 @@ def get_ist_now():
     """Returns current time in IST"""
     return datetime.now(IST)
 
-# --- HELPER: EXTRACT TEXT FROM PDF ---
-def extract_text_from_pdf(file_storage):
-    """Extracts text from an uploaded PDF file in memory."""
+# --- HELPER: EXTRACT TEXT FROM PDF (MEMORY SAFE) ---
+def extract_text_from_pdf(file_path):
+    """Extracts text from an uploaded PDF file saved on disk."""
     try:
-        pdf_reader = PyPDF2.PdfReader(file_storage)
-        text = ""
-        max_pages = min(len(pdf_reader.pages), 12) 
-        for page_num in range(max_pages):
-            page = pdf_reader.pages[page_num]
-            text += page.extract_text() + "\n"
+        # Open the file from disk (saves RAM)
+        with open(file_path, 'rb') as f:
+            pdf_reader = PyPDF2.PdfReader(f)
+            text = ""
+            # Limit to first 15 pages to prevent timeouts
+            max_pages = min(len(pdf_reader.pages), 15) 
+            for page_num in range(max_pages):
+                page = pdf_reader.pages[page_num]
+                text += page.extract_text() + "\n"
         return text
     except Exception as e:
         print(f"PDF Error: {e}")
@@ -92,10 +96,12 @@ def fetch_rss_news_for_topics(topics):
         if not query_term: continue
 
         encoded_topic = urllib.parse.quote(query_term)
-        rss_url = f"https://news.google.com/rss/search?q={encoded_topic}&hl=ml&gl=IN&ceid=IN:ml"
+        # Fetching English news from India region for better global coverage, 
+        # AI will translate if needed based on user pref
+        rss_url = f"https://news.google.com/rss/search?q={encoded_topic}&hl=en-IN&gl=IN&ceid=IN:en"
         
         try:
-            print(f"   -> {query_term}: {rss_url}")
+            # print(f"   -> {query_term}: {rss_url}")
             response = requests.get(rss_url, headers=headers, timeout=4)
             if response.status_code == 200:
                 feed = feedparser.parse(BytesIO(response.content))
@@ -113,20 +119,32 @@ def fetch_rss_news_for_topics(topics):
 
     return combined_text
 
-def generate_ai_news(topics):
+def generate_ai_news(topics, language='malayalam'):
     raw_text = fetch_rss_news_for_topics(topics)
     
-    backup_data = {
-        "headlines": ["വാർത്തകൾ ലഭ്യമാകുന്നില്ല.", "ഇന്റർനെറ്റ് കണക്ഷൻ പരിശോധിക്കുക."],
-        "details": ["സാങ്കേതിക തകരാർ മൂലം വാർത്തകൾ ലഭ്യമാക്കാൻ സാധിക്കുന്നില്ല.", "അല്പസമയത്തിന് ശേഷം വീണ്ടും ശ്രമിക്കുക."]
-    }
+    # 1. Set Language Config
+    if language.lower() == 'english':
+        role = "You are a professional English Radio News Editor."
+        lang_instruction = "Language: English."
+        backup_data = {
+            "headlines": ["News not available.", "Please check your internet."],
+            "details": ["Unable to fetch news due to a technical error.", "Please try again shortly."]
+        }
+    else:
+        role = "You are a professional Malayalam Radio News Editor."
+        lang_instruction = "Language: Malayalam."
+        backup_data = {
+            "headlines": ["വാർത്തകൾ ലഭ്യമാകുന്നില്ല.", "ഇന്റർനെറ്റ് കണക്ഷൻ പരിശോധിക്കുക."],
+            "details": ["സാങ്കേതിക തകരാർ മൂലം വാർത്തകൾ ലഭ്യമാക്കാൻ സാധിക്കുന്നില്ല.", "അല്പസമയത്തിന് ശേഷം വീണ്ടും ശ്രമിക്കുക."]
+        }
 
     if not raw_text or len(raw_text) < 50:
         print("⚠️ RSS Empty. Using Backup.")
         return backup_data
 
+    # 2. Build Prompt
     prompt = f"""
-    You are a professional Malayalam Radio News Editor.
+    {role}
     The listener is interested in these topics: {", ".join(topics)}.
     Below are the latest raw headlines fetched for them.
     
@@ -134,7 +152,7 @@ def generate_ai_news(topics):
     1. Select the 3-4 most important stories relevant to their interests.
     2. Rewrite them into a professional script for a Radio Broadcast.
     3. Output MUST be valid JSON.
-    4. Language: Malayalam.
+    4. {lang_instruction}
     
     Raw News:
     {raw_text[:12000]}
@@ -162,6 +180,9 @@ def create_app():
     app.config['SECRET_KEY'] = 'dev_secret_key_change_in_prod'
     app.config['SQLALCHEMY_DATABASE_URI'] = os.environ.get('DATABASE_URL', 'sqlite:///database.db')
     app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
+    
+    # Increase max upload size to 16MB
+    app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024 
 
     db.init_app(app)
 
@@ -215,26 +236,51 @@ def create_app():
         file = request.files['file']
         if file.filename == '': return jsonify({'success': False, 'message': 'No file selected'}), 400
 
-        print(f"📄 Processing PDF: {file.filename}")
-        raw_text = extract_text_from_pdf(file)
+        # --- FIX: SAVE TO TEMP FILE FIRST (Prevents Memory Crash) ---
+        filename = secure_filename(file.filename)
+        temp_path = os.path.join('/tmp', filename) 
+        # Note: '/tmp' works on Render/Linux.
+        if not os.path.exists('/tmp'): os.makedirs('/tmp')
+        
+        try:
+            file.save(temp_path)
+            print(f"📄 Processing PDF from disk: {filename}")
+            raw_text = extract_text_from_pdf(temp_path)
+        except Exception as e:
+            return jsonify({'success': False, 'message': f'File save error: {str(e)}'}), 500
+        finally:
+            # Clean up: Delete the file after extracting text
+            if os.path.exists(temp_path):
+                os.remove(temp_path)
         
         if len(raw_text) < 100:
             return jsonify({'success': False, 'message': 'Could not read text. Is this an image scan?'}), 400
 
+        # Get User & Preferences
         user = db.session.get(User, session['user_id'])
         user_prefs = user.preferences if user.preferences else {}
-        user_topics = user_prefs.get('topics', [])
         
+        # 1. Get Topics
+        user_topics = user_prefs.get('topics', [])
         cleaned_topics = []
         for t in user_topics:
             if isinstance(t, dict): cleaned_topics.append(t.get('id', 'General'))
             else: cleaned_topics.append(str(t))
         if not cleaned_topics: cleaned_topics = ["General News"]
 
-        print(f"🧠 Filtering PDF for topics: {cleaned_topics}")
+        # 2. Get Language
+        user_language = user_prefs.get('language', 'malayalam').lower()
+        if user_language == 'english':
+            role = "You are a professional English Radio News Editor."
+            lang_instruction = "Language: English."
+        else:
+            role = "You are a professional Malayalam Radio News Editor."
+            lang_instruction = "Language: Malayalam."
+
+        print(f"🧠 Filtering PDF for topics: {cleaned_topics} in {user_language}")
         
         prompt = f"""
-        You are a professional Malayalam Radio News Editor.
+        {role}
         I have uploaded a newspaper PDF. 
         The listener is ONLY interested in these topics: {", ".join(cleaned_topics)}.
         
@@ -244,7 +290,7 @@ def create_app():
         3. Select the 3 most important stories that match their interests.
         4. Rewrite them into a professional script for a Radio Broadcast.
         5. Output MUST be valid JSON.
-        6. Language: Malayalam.
+        6. {lang_instruction}
         
         Raw PDF Text (Truncated):
         {raw_text[:25000]} 
@@ -258,21 +304,21 @@ def create_app():
 
         try:
             response = client.models.generate_content(
-                model='gemini-2.5-flash-lite', 
+                model='gemini-2.5-flash', 
                 contents=prompt
             )
             cleaned_json = clean_json_string(response.text)
             news_data = json.loads(cleaned_json)
 
-            # --- SAVE PDF HISTORY (FIXED) ---
+            # --- SAVE PDF HISTORY ---
             try:
                 headlines = news_data.get('headlines', [])
                 summary_text = f"PDF: {file.filename} | " + (" | ".join(headlines) if headlines else "")
 
                 new_history = History(
                     user_id=user.id,
-                    summary_date=get_ist_now().date(),  # Uses IST
-                    created_at=get_ist_now(),           # Uses IST
+                    summary_date=get_ist_now().date(),
+                    created_at=get_ist_now(),
                     content=summary_text[:500], 
                     meta_data=news_data 
                 )
@@ -314,20 +360,29 @@ def create_app():
         raw_text = extract_text_from_url(url)
         
         if len(raw_text) < 200:
-            return jsonify({'success': False, 'message': 'Could not extract enough text from this link. It might be behind a paywall.'}), 400
+            return jsonify({'success': False, 'message': 'Could not extract enough text. It might be behind a paywall.'}), 400
 
-        # 2. Get User
+        # 2. Get User & Language
         user = db.session.get(User, session['user_id'])
+        user_prefs = user.preferences if user.preferences else {}
+        user_language = user_prefs.get('language', 'malayalam').lower()
+
+        if user_language == 'english':
+            role = "You are a professional English Radio News Editor."
+            lang_instruction = "Language: English."
+        else:
+            role = "You are a professional Malayalam Radio News Editor."
+            lang_instruction = "Language: Malayalam."
         
         # 3. AI Generate
         prompt = f"""
-        You are a professional Malayalam Radio News Editor.
+        {role}
         I have provided the raw text of a news article below.
         
         Task:
         1. Summarize this specific article into a short, engaging radio news segment.
         2. Keep it under 60 words.
-        3. Language: Malayalam.
+        3. {lang_instruction}
         4. Output MUST be valid JSON.
         
         Article Text:
@@ -342,7 +397,7 @@ def create_app():
 
         try:
             response = client.models.generate_content(
-                model='gemini-2.5-flash-lite', 
+                model='gemini-2.5-flash', 
                 contents=prompt
             )
             cleaned_json = clean_json_string(response.text)
@@ -371,6 +426,7 @@ def create_app():
         except Exception as e:
             print(f"❌ AI Link Error: {e}")
             return jsonify({'success': False, 'message': 'AI failed to process link.'}), 500
+
     # API 2: PROCESS LIVE RSS NEWS
     @app.route('/api/process-news', methods=['POST'])
     def process_news():
@@ -381,17 +437,22 @@ def create_app():
 
         # Safe Preferences Loading
         user_prefs = user.preferences if user.preferences else {}
-        user_topics = user_prefs.get('topics', [])
         
+        # Get Topics
+        user_topics = user_prefs.get('topics', [])
         cleaned_topics = []
         for t in user_topics:
             if isinstance(t, dict): cleaned_topics.append(t.get('id', 'General'))
             else: cleaned_topics.append(str(t))
         if not cleaned_topics: cleaned_topics = ["Kerala"]
 
-        print(f"👤 User {user.id} requested topics: {cleaned_topics}")
+        # Get Language
+        user_language = user_prefs.get('language', 'malayalam').lower()
 
-        news_data = generate_ai_news(cleaned_topics)
+        print(f"👤 User {user.id} requested topics: {cleaned_topics} in {user_language}")
+
+        # Pass language to the generator
+        news_data = generate_ai_news(cleaned_topics, user_language)
         
         # Save History
         try:
